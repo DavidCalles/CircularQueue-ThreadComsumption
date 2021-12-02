@@ -5,13 +5,15 @@
 *
 * Author:              PROG8130 / Allan Smith
 * Date:                Nov 3 2021
+* 
 ******************************************************************************
 */
 
 #include <windows.h>
 #include <stdio.h>
 
-DWORD WINAPI myReadThreadFunction(LPVOID lpParam);                                   // function used by read from queue thread
+DWORD WINAPI myReadThreadFunction(LPVOID lpParam);                                   // function used to read from queue thread
+DWORD WINAPI myWriteThreadFunction(LPVOID lpParam);                                  // function used to write from queue thread
 unsigned int putToCircularQueue(char* ptrInputBuffer, unsigned int bufferLength);    // circular queue function to add data to queue
 unsigned int getFromCircularQueue(char* ptrOutputBuffer, unsigned int bufferLength); // circular queue function to remove data from queue
 
@@ -30,17 +32,30 @@ typedef struct {
 }myQueueStruct;
 
 myQueueStruct myQueue;                  // create an instance of the circular queue data structure
+HANDLE mutexLock;						// mutex lock handle for critical sections
+char    inputBuffer[BUFFER_SIZE];		
 
 int main()
 {	
+	// Create a mutex with no initial owner
+	mutexLock = CreateMutex(
+		NULL,              // default security attributes
+		FALSE,             // initially not owned
+		NULL);             // unnamed mutex
+
+	if (mutexLock == NULL)
+	{
+		printf("CreateMutex error: %d\n", GetLastError());
+		return 1;
+	}
+
 	// Initiate values for circular buffer
 	myQueue.ptrBuffer = NULL;
 	myQueue.queueCount = 0;
 	myQueue.ptrCircularHead = NULL;
 	myQueue.ptrCircularTail = NULL;
 
-	HANDLE  hThread;            // handle to thread
-	char    inputBuffer[BUFFER_SIZE];
+	HANDLE  hThread[2];            // handles to threads
 
 	myQueue.ptrBuffer = (char*)calloc(CIRCULAR_QUEUE_SIZE, sizeof(char));
 	if (myQueue.ptrBuffer == NULL)
@@ -52,25 +67,43 @@ int main()
 	myQueue.ptrCircularHead = myQueue.ptrCircularTail = myQueue.ptrBuffer;
 
 	// create a thread that will consume the data we type in to demonstrate dequeing the data
-	hThread = CreateThread(
+	hThread[0] = CreateThread(
 		NULL,                   // default security attributes
 		0,                      // use default stack size  
 		myReadThreadFunction,   // thread function name
 		NULL,                   // argument to thread function (not being used)
 		0,                      // use default creation flags 
 		NULL);                  // returns the thread identifier (not being used)
-
-	printf("length of circular queue is %d\n", CIRCULAR_QUEUE_SIZE);
-	// get a string from the console and queue it to circular queue
-	while (1)
+	if (hThread[0] == NULL)
 	{
-		scanf_s("%199s", inputBuffer, BUFFER_SIZE);     // get data from console (note this is the input from console not the circular queue yet)
-		inputBuffer[BUFFER_SIZE - 1] = '\0';			// ensure the read string has a nul char on end of string
-
-		// put the data into the circular queue but check if an error (marked by queue function returning 0) occurred
-		if (putToCircularQueue(inputBuffer, strlen(inputBuffer)) == 0)
-			printf("Error queuing data\n");
+		printf("CreateThread error: %d\n", GetLastError());
+		return 1;
 	}
+	printf("length of circular queue is %d\n", CIRCULAR_QUEUE_SIZE);
+
+	// create a thread that will put the data into the circular buffer
+	hThread[1] = CreateThread(
+		NULL,                   // default security attributes
+		0,                      // use default stack size  
+		myWriteThreadFunction,   // thread function name
+		NULL,                   // argument to thread function (not being used)
+		0,                      // use default creation flags 
+		NULL);                  // returns the thread identifier (not being used)
+	if (hThread[1] == NULL)
+	{
+		printf("CreateThread error: %d\n", GetLastError());
+		return 1;
+	}
+	// Wait for all threads to terminate
+
+	WaitForMultipleObjects(2, hThread, TRUE, INFINITE);
+
+	// Close thread and mutex handles
+
+	CloseHandle(hThread[0]);
+	CloseHandle(hThread[1]);
+	CloseHandle(mutexLock);
+
 	return 0;
 }
 
@@ -159,7 +192,7 @@ unsigned int getFromCircularQueue(char* ptrOutputBuffer, unsigned int bufferLeng
 	}
 	else {
 		// Means the queue is full
-		printf("Empty queue.\n");
+		//printf("Empty queue.\n");
 	}
 	
 
@@ -169,6 +202,43 @@ unsigned int getFromCircularQueue(char* ptrOutputBuffer, unsigned int bufferLeng
 
 	return readCount;
 }
+
+// get a string from the console and queue it to circular queue
+DWORD WINAPI myWriteThreadFunction(LPVOID lpParam) {
+
+	DWORD mutexWaitResult;
+
+	while (1)
+	{
+		scanf_s("%199s", inputBuffer, BUFFER_SIZE);     // get data from console (note this is the input from console not the circular queue yet)
+		inputBuffer[BUFFER_SIZE - 1] = '\0';			// ensure the read string has a nul char on end of string
+		
+		// Wait for lock to be available
+		mutexWaitResult = WaitForSingleObject(
+			mutexLock,    // handle to mutex
+			INFINITE);	  // no time-out interval
+
+		if (mutexWaitResult == WAIT_OBJECT_0) {
+			__try {
+				// put the data into the circular queue but check if an error (marked by queue function returning 0) occurred
+				if (putToCircularQueue(inputBuffer, strlen(inputBuffer)) == 0)
+					printf("Error queuing data\n");
+			}
+			__finally {
+				// Release ownership of the mutex object
+				if (!ReleaseMutex(mutexLock))
+				{
+					printf("Error while releasing mutex!\n");
+				}
+			}
+		}
+		else { // Mutex lock is abandoned
+			printf("Mutex lock abandoned!\n");
+		}
+	}
+	return 0;    // will never reach here
+}
+
 
 // FUNCTION      : myReadThreadFunction
 // DESCRIPTION   :
@@ -183,13 +253,35 @@ DWORD WINAPI myReadThreadFunction(LPVOID lpParam)
 {
 	char readBuffer[BUFFER_SIZE];     // local buffer to put the data into when reading from queue and print
 	unsigned int  readCount = 0;      // the number of characters read from queue
+	DWORD mutexWaitResult;
 
 	while (1)
 	{
 		Sleep(INPUT_TIMEOUT_MS);      // wait for some data to be received
 
-		// check if data is available and if so print it out
-		readCount = getFromCircularQueue(readBuffer, BUFFER_SIZE);
+		
+		// Wait for lock to be available
+		mutexWaitResult = WaitForSingleObject(
+			mutexLock,    // handle to mutex
+			INFINITE);	  // no time-out interval
+
+		if (mutexWaitResult == WAIT_OBJECT_0) {
+			__try {
+				// Get data to consume
+				readCount = getFromCircularQueue(readBuffer, BUFFER_SIZE);
+			}
+			__finally {
+				// Release ownership of the mutex object
+				if (!ReleaseMutex(mutexLock))
+				{
+					printf("Error while releasing mutex!\n");
+				}
+			}
+		}
+		else { // Mutex lock is abandoned
+			printf("Mutex lock abandoned!\n");
+		}
+		
 		if (readCount != 0)           // check for reads that did not get any data
 			printf("UNQUEUE: %s\n", readBuffer);
 	}

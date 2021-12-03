@@ -1,28 +1,43 @@
 /*******************************************************************************
 * File Name          : circularQueueV2021.cpp
-* Description        : Simple example of an implemenation of a circular Queue
-*                      skelleton
+* Description        : Implementation of a circular queue with protection for 
+*						critical sections in a consumer/producer problem.
 *
-* Author:              PROG8130 / Allan Smith
-* Date:                Nov 3 2021
+* Author:              PROG8130 / Allan Smith and David Calles
+* Date:                Dec 2, 2021
 * 
 ******************************************************************************
 */
 
+/**************************************************************************
+---------------------------- LIBRARY DEFINITIONS --------------------------
+***************************************************************************/
+
 #include <windows.h>
 #include <stdio.h>
+
+/**************************************************************************
+---------------------------------- DATA TYPES -----------------------------
+***************************************************************************/
 
 DWORD WINAPI myReadThreadFunction(LPVOID lpParam);                                   // function used to read from queue thread
 DWORD WINAPI myWriteThreadFunction(LPVOID lpParam);                                  // function used to write from queue thread
 unsigned int putToCircularQueue(char* ptrInputBuffer, unsigned int bufferLength);    // circular queue function to add data to queue
 unsigned int getFromCircularQueue(char* ptrOutputBuffer, unsigned int bufferLength); // circular queue function to remove data from queue
 
+
+/**************************************************************************
+------------------------------------ DEFINES -------------------------------
+***************************************************************************/
 #define BUFFER_SIZE         200                // local buffer used for sending or receiving data to/from queue in main and worker thread
 
 #define INPUT_TIMEOUT_MS    5000               // dequeue every 5 seconds
 
 #define CIRCULAR_QUEUE_SIZE 10                 // size of the circular queue
 
+/**************************************************************************
+---------------------------------- DATA TYPES -----------------------------
+***************************************************************************/
 // data structure used to keep track of circular queue
 typedef struct {
 	char* ptrBuffer;                    // pointer to start of the circular queue buffer
@@ -31,9 +46,17 @@ typedef struct {
 	volatile char* ptrCircularTail;     // loation where data is removed from queue
 }myQueueStruct;
 
+/**************************************************************************
+----------------------------- GLOBAL VARIABLES ----------------------------
+***************************************************************************/
+
 myQueueStruct myQueue;                  // create an instance of the circular queue data structure
 HANDLE mutexLock;						// mutex lock handle for critical sections
 char    inputBuffer[BUFFER_SIZE];		
+
+/**************************************************************************
+------------------------------------- MAIN --------------------------------
+***************************************************************************/
 
 int main()
 {	
@@ -194,16 +217,18 @@ unsigned int getFromCircularQueue(char* ptrOutputBuffer, unsigned int bufferLeng
 		// Means the queue is full
 		//printf("Empty queue.\n");
 	}
-	
-
-	// add code to implement the removing from the circular queue using the data structures in myQueueStruct
-	// and place the data into the ptrOutputBuffer up to a maximum number of bytes specified by bufferLength
-	// return the count of the bytes that was dequeued
 
 	return readCount;
 }
+// FUNCTION      : myWriteThreadFunction
+// DESCRIPTION   :
+//   A seperate thread to get a string from the console and queue it to circular queue
+// PARAMETERS    :
+//   lpParam - arguement passed into thread (not used in this example)
+//
+// RETURNS       :
+//   Will never return so no effective return value
 
-// get a string from the console and queue it to circular queue
 DWORD WINAPI myWriteThreadFunction(LPVOID lpParam) {
 
 	DWORD mutexWaitResult;
